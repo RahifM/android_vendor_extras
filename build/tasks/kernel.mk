@@ -1,4 +1,5 @@
 # Copyright (C) 2012 The CyanogenMod Project
+#           (C) 2017-2020 The LineageOS Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -65,6 +66,8 @@
 #                                          modules in root instead of vendor
 #   NEED_KERNEL_MODULE_SYSTEM          = Optional, if true, install kernel
 #                                          modules in system instead of vendor
+#   NEED_KERNEL_MODULE_VENDOR_OVERLAY  = Optional, if true, install kernel
+#                                          modules in vendor_overlay instead of vendor
 
 
 ifneq ($(TARGET_NO_KERNEL),true)
@@ -77,25 +80,19 @@ VARIANT_DEFCONFIG := $(TARGET_KERNEL_VARIANT_CONFIG)
 SELINUX_DEFCONFIG := $(TARGET_KERNEL_SELINUX_CONFIG)
 
 ## Internal variables
+DTC := $(HOST_OUT_EXECUTABLES)/dtc
 DTBS_OUT := $(PRODUCT_OUT)/dtbs
 KERNEL_OUT := $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ
 KERNEL_CONFIG := $(KERNEL_OUT)/.config
-
-KERNEL_DEFCONFIG_SRC := $(KERNEL_SRC)/arch/$(KERNEL_ARCH)/configs/$(KERNEL_DEFCONFIG)
+KERNEL_RELEASE := $(KERNEL_OUT)/include/config/kernel.release
 
 ifeq ($(KERNEL_ARCH),x86_64)
 KERNEL_DEFCONFIG_ARCH := x86
 else
 KERNEL_DEFCONFIG_ARCH := $(KERNEL_ARCH)
 endif
-KERNEL_DEFCONFIG_SRC := $(KERNEL_SRC)/arch/$(KERNEL_DEFCONFIG_ARCH)/configs/$(KERNEL_DEFCONFIG)
-
-ifneq ($(TARGET_PREBUILT_KERNEL),)
-    ifeq ($(BOARD_KERNEL_IMAGE_NAME),)
-    $(error BOARD_KERNEL_IMAGE_NAME not defined.)
-    endif
-endif
-TARGET_PREBUILT_INT_KERNEL := $(KERNEL_OUT)/arch/$(KERNEL_ARCH)/boot/$(BOARD_KERNEL_IMAGE_NAME)
+KERNEL_DEFCONFIG_DIR := $(KERNEL_SRC)/arch/$(KERNEL_DEFCONFIG_ARCH)/configs
+KERNEL_DEFCONFIG_SRC := $(KERNEL_DEFCONFIG_DIR)/$(KERNEL_DEFCONFIG)
 
 # Clear this first to prevent accidental poisoning from env
 KERNEL_MAKE_FLAGS :=
@@ -115,7 +112,7 @@ endif
 
 ifneq ($(TARGET_KERNEL_ADDITIONAL_CONFIG),)
 KERNEL_ADDITIONAL_CONFIG := $(TARGET_KERNEL_ADDITIONAL_CONFIG)
-KERNEL_ADDITIONAL_CONFIG_SRC := $(KERNEL_SRC)/arch/$(KERNEL_ARCH)/configs/$(KERNEL_ADDITIONAL_CONFIG)
+KERNEL_ADDITIONAL_CONFIG_SRC := $(KERNEL_DEFCONFIG_DIR)/$(KERNEL_ADDITIONAL_CONFIG)
     ifeq ("$(wildcard $(KERNEL_ADDITIONAL_CONFIG_SRC))","")
         $(warning TARGET_KERNEL_ADDITIONAL_CONFIG '$(TARGET_KERNEL_ADDITIONAL_CONFIG)' doesn't exist)
         KERNEL_ADDITIONAL_CONFIG_SRC := /dev/null
@@ -123,6 +120,11 @@ KERNEL_ADDITIONAL_CONFIG_SRC := $(KERNEL_SRC)/arch/$(KERNEL_ARCH)/configs/$(KERN
 else
     KERNEL_ADDITIONAL_CONFIG_SRC := /dev/null
 endif
+
+ifeq ($(BOARD_KERNEL_IMAGE_NAME),)
+$(error BOARD_KERNEL_IMAGE_NAME not defined.)
+endif
+TARGET_PREBUILT_INT_KERNEL := $(KERNEL_OUT)/arch/$(KERNEL_ARCH)/boot/$(BOARD_KERNEL_IMAGE_NAME)
 
 ifeq "$(wildcard $(KERNEL_SRC) )" ""
     ifneq ($(TARGET_PREBUILT_KERNEL),)
@@ -139,7 +141,7 @@ ifeq "$(wildcard $(KERNEL_SRC) )" ""
     ifneq ($(HAS_PREBUILT_KERNEL),)
         $(warning ***************************************************************)
         $(warning * Using prebuilt kernel binary instead of source              *)
-        $(warning * THIS IS DEPRECATED, AND WILL BE DISCONTINUED                *)
+        $(warning * THIS IS DEPRECATED, AND IS NOT ADVISED.                     *)
         $(warning * Please configure your device to download the kernel         *)
         $(warning * source repository to $(KERNEL_SRC))
         $(warning ***************************************************************)
@@ -168,9 +170,8 @@ else
         $(warning * Please add the TARGET_KERNEL_CONFIG variable to your   *)
         $(warning * BoardConfig.mk file                                    *)
         $(warning **********************************************************)
-        # $(error "NO KERNEL CONFIG")
+        $(error "NO KERNEL CONFIG")
     else
-        #$(info Kernel source found, building it)
         FULL_KERNEL_BUILD := true
         KERNEL_BIN := $(TARGET_PREBUILT_INT_KERNEL)
     endif
@@ -179,21 +180,24 @@ endif
 ifeq ($(FULL_KERNEL_BUILD),true)
 
 ifeq ($(NEED_KERNEL_MODULE_ROOT),true)
-KERNEL_MODULES_INSTALL := root
-KERNEL_MODULES_OUT := $(TARGET_ROOT_OUT)/lib/modules
-KERNEL_DEPMOD_STAGING_DIR := $(call intermediates-dir-for,PACKAGING,depmod_recovery)
+KERNEL_MODULES_OUT := $(TARGET_ROOT_OUT)
+KERNEL_DEPMOD_STAGING_DIR := $(KERNEL_BUILD_OUT_PREFIX)$(call intermediates-dir-for,PACKAGING,depmod_recovery)
 KERNEL_MODULE_MOUNTPOINT :=
 else ifeq ($(NEED_KERNEL_MODULE_SYSTEM),true)
-KERNEL_MODULES_INSTALL := $(TARGET_COPY_OUT_SYSTEM)
-KERNEL_MODULES_OUT := $(TARGET_OUT)/lib/modules
-KERNEL_DEPMOD_STAGING_DIR := $(call intermediates-dir-for,PACKAGING,depmod_system)
+KERNEL_MODULES_OUT := $(TARGET_OUT)
+KERNEL_DEPMOD_STAGING_DIR := $(KERNEL_BUILD_OUT_PREFIX)$(call intermediates-dir-for,PACKAGING,depmod_system)
 KERNEL_MODULE_MOUNTPOINT := system
+else ifeq ($(NEED_KERNEL_MODULE_VENDOR_OVERLAY),true)
+KERNEL_MODULES_OUT := $(TARGET_OUT_PRODUCT)/vendor_overlay/$(PRODUCT_TARGET_VNDK_VERSION)
+KERNEL_DEPMOD_STAGING_DIR := $(KERNEL_BUILD_OUT_PREFIX)$(call intermediates-dir-for,PACKAGING,depmod_product)
+KERNEL_MODULE_MOUNTPOINT := vendor
+$(INSTALLED_PRODUCTIMAGE_TARGET): $(TARGET_PREBUILT_INT_KERNEL)
 else
-KERNEL_MODULES_INSTALL := $(TARGET_COPY_OUT_VENDOR)
-KERNEL_MODULES_OUT := $(TARGET_OUT_VENDOR)/lib/modules
-KERNEL_DEPMOD_STAGING_DIR := $(call intermediates-dir-for,PACKAGING,depmod_vendor)
+KERNEL_MODULES_OUT := $(TARGET_OUT_VENDOR)
+KERNEL_DEPMOD_STAGING_DIR := $(KERNEL_BUILD_OUT_PREFIX)$(call intermediates-dir-for,PACKAGING,depmod_vendor)
 KERNEL_MODULE_MOUNTPOINT := vendor
 endif
+MODULES_INTERMEDIATES := $(KERNEL_BUILD_OUT_PREFIX)$(call intermediates-dir-for,PACKAGING,kernel_modules)
 
 TARGET_KERNEL_CROSS_COMPILE_PREFIX := $(strip $(TARGET_KERNEL_CROSS_COMPILE_PREFIX))
 ifneq ($(TARGET_KERNEL_CROSS_COMPILE_PREFIX),)
@@ -276,11 +280,11 @@ ifeq ($(HOST_OS),darwin)
   KERNEL_MAKE_FLAGS += C_INCLUDE_PATH=$(BUILD_TOP)/external/elfutils/0.153/libelf/
 endif
 
-ifeq ($(TARGET_KERNEL_MODULES),)
-    TARGET_KERNEL_MODULES := INSTALLED_KERNEL_MODULES
+ifneq ($(TARGET_KERNEL_MODULES),)
+    $(error TARGET_KERNEL_MODULES is no longer supported!)
 endif
 
-KERNEL_ADDITIONAL_CONFIG_OUT := $(KERNEL_OUT)/.additional_config
+KERNEL_MAKE_FLAGS += DTC=$(KERNEL_BUILD_OUT_PREFIX)$(DTC)
 
 # Internal implementation of make-kernel-target
 # $(1): output path (The value passed to O=)
@@ -307,12 +311,16 @@ define make-dtb-target
 $(call internal-make-kernel-target,$(DTBS_OUT),$(1))
 endef
 
-$(KERNEL_ADDITIONAL_CONFIG_OUT):
+$(KERNEL_OUT):
+	mkdir -p $(KERNEL_OUT)
+
+KERNEL_ADDITIONAL_CONFIG_OUT := $(KERNEL_OUT)/.additional_config
+
+$(KERNEL_ADDITIONAL_CONFIG_OUT): $(KERNEL_OUT)
 	$(hide) cmp -s $(KERNEL_ADDITIONAL_CONFIG_SRC) $@ || cp $(KERNEL_ADDITIONAL_CONFIG_SRC) $@;
 
 $(KERNEL_CONFIG): $(KERNEL_DEFCONFIG_SRC) $(KERNEL_ADDITIONAL_CONFIG_OUT)
 	echo -e ${CL_GRN}"Building Kernel Config"${CL_RST}
-	$(hide) mkdir -p $(KERNEL_OUT)
 	$(call make-kernel-target,VARIANT_DEFCONFIG=$(VARIANT_DEFCONFIG) SELINUX_DEFCONFIG=$(SELINUX_DEFCONFIG) $(KERNEL_DEFCONFIG))
 	$(hide) if [ ! -z "$(KERNEL_CONFIG_OVERRIDE)" ]; then \
 			echo "Overriding kernel config with '$(KERNEL_CONFIG_OVERRIDE)'"; \
@@ -327,62 +335,47 @@ $(KERNEL_CONFIG): $(KERNEL_DEFCONFIG_SRC) $(KERNEL_ADDITIONAL_CONFIG_OUT)
 			$(call make-kernel-target,KCONFIG_ALLCONFIG=$(KERNEL_OUT)/.config alldefconfig); \
 		fi
 
-$(TARGET_PREBUILT_INT_KERNEL): $(KERNEL_CONFIG)
+$(TARGET_PREBUILT_INT_KERNEL): $(KERNEL_CONFIG) $(DEPMOD) $(DTC)
 	echo -e ${CL_GRN}"Building Kernel"${CL_RST}
-	$(hide) rm -rf $(KERNEL_MODULES_OUT)
-	$(hide) mkdir -p $(KERNEL_MODULES_OUT)
-	$(hide) rm -rf $(KERNEL_DEPMOD_STAGING_DIR)
 	$(call make-kernel-target,$(BOARD_KERNEL_IMAGE_NAME))
 	$(hide) if grep -q '^CONFIG_OF=y' $(KERNEL_CONFIG); then \
 			echo -e ${CL_GRN}"Building DTBs"${CL_RST}; \
 			$(call make-kernel-target,dtbs); \
 		fi
-	$(hide) if grep -q '^CONFIG_MODULES=y' $(KERNEL_CONFIG); then \
+	$(hide) if grep -q '=m' $(KERNEL_CONFIG); then \
 			echo -e ${CL_GRN}"Building Kernel Modules"${CL_RST}; \
-			$(call make-kernel-target,modules); \
-		fi
-
-.PHONY: INSTALLED_KERNEL_MODULES
-INSTALLED_KERNEL_MODULES: depmod-host
-	$(hide) if grep -q '^CONFIG_MODULES=y' $(KERNEL_CONFIG); then \
+			$(call make-kernel-target,modules) || exit "$$?"; \
 			echo -e ${CL_GRN}"Installing Kernel Modules"${CL_RST}; \
-			$(call make-kernel-target,INSTALL_MOD_PATH=../../$(KERNEL_MODULES_INSTALL) modules_install) && \
-			mofile=$$(find $(KERNEL_MODULES_OUT) -type f -name modules.order) && \
-			mpath=$$(dirname $$mofile) && \
-			for f in $$(find $$mpath/kernel -type f -name '*.ko'); do \
-				$(KERNEL_TOOLCHAIN_PATH)strip --strip-unneeded $$f; \
-				mv $$f $(KERNEL_MODULES_OUT); \
-			done && \
-			rm -rf $$mpath && \
-			mkdir -p $(KERNEL_DEPMOD_STAGING_DIR)/lib/modules/0.0/$(KERNEL_MODULE_MOUNTPOINT)/lib/modules && \
-			find $(KERNEL_MODULES_OUT) -name *.ko -exec cp {} $(KERNEL_DEPMOD_STAGING_DIR)/lib/modules/0.0/$(KERNEL_MODULE_MOUNTPOINT)/lib/modules \; && \
-			$(DEPMOD) -b $(KERNEL_DEPMOD_STAGING_DIR) 0.0 && \
-			sed -e 's/\(.*modules.*\):/\/\1:/g' -e 's/ \([^ ]*modules[^ ]*\)/ \/\1/g' $(KERNEL_DEPMOD_STAGING_DIR)/lib/modules/0.0/modules.dep > $(KERNEL_MODULES_OUT)/modules.dep; \
+			$(call make-kernel-target,INSTALL_MOD_PATH=$(MODULES_INTERMEDIATES) INSTALL_MOD_STRIP=1 modules_install); \
+			kernel_release=$$(cat $(KERNEL_RELEASE)) \
+			kernel_modules_dir=$(MODULES_INTERMEDIATES)/lib/modules/$$kernel_release \
+			$(foreach s, $(TARGET_MODULE_ALIASES),\
+				$(eval p := $(subst :,$(space),$(s))) \
+				; mv $$(find $$kernel_modules_dir -name $(word 1,$(p))) $$kernel_modules_dir/$(word 2,$(p))); \
+			modules=$$(find $$kernel_modules_dir -type f -name '*.ko'); \
+			($(call build-image-kernel-modules,$$modules,$(KERNEL_MODULES_OUT),$(KERNEL_MODULE_MOUNTPOINT)/,$(KERNEL_DEPMOD_STAGING_DIR))); \
 		fi
-
-$(TARGET_KERNEL_MODULES): $(TARGET_PREBUILT_INT_KERNEL)
 
 .PHONY: kerneltags
 kerneltags: $(KERNEL_CONFIG)
-	$(hide) mkdir -p $(KERNEL_OUT)
 	$(call make-kernel-target,tags)
 
 .PHONY: kernelsavedefconfig alldefconfig
 
-kernelsavedefconfig:
-	$(hide) mkdir -p $(KERNEL_OUT)
+kernelsavedefconfig: $(KERNEL_OUT)
 	$(call make-kernel-target,$(KERNEL_DEFCONFIG))
 	env KCONFIG_NOTIMESTAMP=true \
 		 $(call make-kernel-target,savedefconfig)
 	cp $(KERNEL_OUT)/defconfig $(KERNEL_DEFCONFIG_SRC)
 
-alldefconfig:
-	$(hide) mkdir -p $(KERNEL_OUT)
+alldefconfig: $(KERNEL_OUT)
 	env KCONFIG_NOTIMESTAMP=true \
 		 $(call make-kernel-target,alldefconfig)
 
 ifeq ($(TARGET_NEEDS_DTBOIMAGE),true)
-$(BOARD_PREBUILT_DTBOIMAGE):
+MKDTIMG := $(HOST_OUT_EXECUTABLES)/mkdtimg$(HOST_EXECUTABLE_SUFFIX)
+MKDTBOIMG := $(HOST_OUT_EXECUTABLES)/mkdtboimg.py$(HOST_EXECUTABLE_SUFFIX)
+$(BOARD_PREBUILT_DTBOIMAGE): $(DTC) $(MKDTIMG) $(MKDTBOIMG)
 	echo -e ${CL_GRN}"Building DTBO.img"${CL_RST}
 	$(call make-dtbo-target,$(KERNEL_DEFCONFIG))
 	$(call make-dtbo-target,dtbo.img)
@@ -405,7 +398,7 @@ INSTALLED_DTBOIMAGE_TARGET := $(PRODUCT_OUT)/dtbo.img
 ALL_PREBUILT += $(INSTALLED_DTBOIMAGE_TARGET)
 
 ifeq ($(BOARD_INCLUDE_DTB_IN_BOOTIMG),true)
-$(INSTALLED_DTBIMAGE_TARGET):
+$(INSTALLED_DTBIMAGE_TARGET): $(DTC)
 	echo -e ${CL_GRN}"Building DTB Image"${CL_RST}
 	$(call make-dtb-target,$(KERNEL_DEFCONFIG))
 	$(call make-dtb-target,dtbs)
@@ -415,7 +408,7 @@ dtbimage: $(INSTALLED_DTBIMAGE_TARGET)
 endif # BOARD_INCLUDE_DTB_IN_BOOTIMG
 
 .PHONY: kernel
-kernel: $(INSTALLED_KERNEL_TARGET) $(TARGET_KERNEL_MODULES)
+kernel: $(INSTALLED_KERNEL_TARGET)
 
 .PHONY: dtboimage
 dtboimage: $(INSTALLED_DTBOIMAGE_TARGET)
